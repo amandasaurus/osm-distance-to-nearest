@@ -1,0 +1,106 @@
+#! /bin/bash
+set -o errexit -o pipefail -o nounset
+
+function print_help_and_exit {
+	cat <<-ENDHELP
+	$(basename "$0") -i FILENAME.osm.pbf -a tag1=value -b tag2=value2 [ -p DB_PREFIX ] [ -o OUTPUT_PREFIX ]
+
+	-i FILENAME.osm.pbf: Filename to process
+	-a FILTER1: use this osmium(1) tags-filter as the initial objects
+	-b FILTER2: use this osmium(1) tags-filter as other objects
+
+	-p DB_PREFIX: Use this text as the prefix to the created table names. Optional. If unset, no prefix is used
+	-o OUTPUT_PREFIX: Use this text as the prefix for the files created. Optional. If unset, no prefix is used
+	ENDHELP
+	exit 0
+}
+
+DB_PREFIX=""
+OUTPUT_PREFIX=""
+B_TO_A=false
+DEFAULT_COLUMNS=()
+COLUMNS=()
+while getopts "i:o:a:b:p:r" OPT ; do
+	case $OPT in
+		i) FILENAME="$(realpath "${OPTARG}")" ;;
+		o) OUTPUT_PREFIX=$OPTARG ;;
+		a) FILTER_A="$OPTARG" ;;
+		b) FILTER_B="$OPTARG" ;;
+		p) DB_PREFIX="$OPTARG" ;;
+		r) B_TO_A=true ;;
+		*) exit 1 ;;
+	esac
+done
+export PGOPTIONS='--client-min-messages=warning'
+
+[ ! -v FILENAME ] && print_help_and_exit
+[ ! -v FILTER_A ] && print_help_and_exit
+[ ! -v FILTER_A ] && print_help_and_exit
+[ ! -s "$FILENAME" ] && print_help_and_exit
+
+psql -q -X -c "drop table if exists ${DB_PREFIX}dist_comp_a; create table ${DB_PREFIX}dist_comp_a ( geom geography, osm_type TEXT, osm_id BIGINT, tags JSONB ); create index on ${DB_PREFIX}dist_comp_a using gist (geom);"
+psql -q -X -c "drop table if exists ${DB_PREFIX}dist_comp_b; create table ${DB_PREFIX}dist_comp_b ( geom geography, osm_type TEXT, osm_id BIGINT, tags JSONB ); create index on ${DB_PREFIX}dist_comp_b using gist (geom);"
+
+echo "${FILTER_A}:"
+TMPFILE="$(mktemp -p . tmp.dist_comp.XXXXXX.osm.pbf)"
+SECONDS=0
+echo "     extracting tags"
+osmium tags-filter --progress "$FILENAME" --overwrite -o "$TMPFILE" "$FILTER_A"
+echo "     loading into PostgreSQL"
+osmium export --progress "$TMPFILE" -f pg -a type,id -o - | psql -X -c "COPY ${DB_PREFIX}dist_comp_a FROM STDIN;"
+echo "Took $(units ${SECONDS}seconds "hours;minutes;seconds") ( ${SECONDS}sec ) to extract & load $FILTER_A objects"
+
+echo "Adding data for ${FILTER_B}..."
+rm -f "$TMPFILE"
+SECONDS=0
+echo "${FILTER_B}:"
+echo "     extracting tags"
+osmium tags-filter --progress "$FILENAME" --overwrite -o "$TMPFILE" "$FILTER_B"
+echo "     loading into PostgreSQL"
+osmium export --progress "$TMPFILE" -f pg -a type,id -o - | psql -X -c "COPY ${DB_PREFIX}dist_comp_b FROM STDIN;"
+echo "Took $(units ${SECONDS}seconds "hours;minutes;seconds") ( ${SECONDS}sec ) to extract & load $FILTER_B objects"
+
+rm -f "$TMPFILE"
+psql -q -X -c "analyze ${DB_PREFIX}dist_comp_a ; analyze ${DB_PREFIX}dist_comp_b;"
+
+echo "Matching up nearest"
+psql -Xq -c "drop table if exists ${DB_PREFIX}dist_comp_a_w_nearest_b ; CREATE TABLE ${DB_PREFIX}dist_comp_a_w_nearest_b AS ( select a.tags as a_tags, a.geom as a_geom, a.osm_type as a_osm_type, a.osm_id as a_osm_id, b.tags as b_tags, b.geom as b_geom, b.osm_type as b_osm_type, b.osm_id as b_osm_id, distance_m from ${DB_PREFIX}dist_comp_a as a cross join lateral ( select *, ST_Distance(a.geom, b.geom) as distance_m from ${DB_PREFIX}dist_comp_b as b order by a.geom<->b.geom limit 1 ) as b )"
+if $B_TO_A ; then
+	psql -Xq -c "insert into ${DB_PREFIX}dist_comp_a_w_nearest_b select a.tags as a_tags, a.geom as a_geom, a.osm_type as a_osm_type, a.osm_id as a_osm_id, b.tags as b_tags, b.geom as b_geom, b.osm_type as b_osm_type, b.osm_id as b_osm_id, distance_m from ${DB_PREFIX}dist_comp_a as a cross join lateral ( select *, ST_Distance(a.geom, b.geom) as distance_m from ${DB_PREFIX}dist_comp_b as b order by a.geom<->b.geom limit 1 ) as b"
+fi
+psql -Xq -c "create index on ${DB_PREFIX}dist_comp_a_w_nearest_b (distance_m);"
+psql -Xq -c "drop table ${DB_PREFIX}dist_comp_a ; drop table ${DB_PREFIX}dist_comp_b;"
+
+psql -XAt -c "WITH geojson_features AS ( select a_tags, b_tags, distance_m, ST_ShortestLine(a_geom::geometry, b_geom::geometry) as geometry from ${DB_PREFIX}dist_comp_a_w_nearest_b )
+	select jsonb_build_object('type', 'FeatureCollection', 'features', json_agg(ST_AsGeoJson(geojson_features.*)::json) ) from geojson_features
+		" >  "${DB_PREFIX}distances.geojson"
+
+CSV_FILENAME="${OUTPUT_PREFIX}distances.csv"
+echo "Exporting to CSV file $CSV_FILENAME"
+psql -XAt -c "COPY (
+	SELECT
+			a_tags,
+			a_osm_type,
+			a_osm_id,
+			b_tags,
+			b_osm_type,
+			b_osm_id,
+			distance_m,
+			ST_AsText(ST_Centroid(a_geom)) as a_point_wkt,
+			ST_AsGeoJson(ST_Centroid(a_geom)) as a_point_geojson,
+			ST_Y(ST_Centroid(a_geom)::geometry) as a_point_lat,
+			ST_X(ST_Centroid(a_geom)::geometry) as a_point_lng,
+
+			ST_AsText(ST_Centroid(b_geom)) as b_point_wkt,
+			ST_AsGeoJson(ST_Centroid(b_geom)) as b_point_geojson,
+			ST_Y(ST_Centroid(b_geom)::geometry) as b_point_lat,
+			ST_X(ST_Centroid(b_geom)::geometry) as b_point_lng,
+
+			ST_AsText(ST_ShortestLine(a_geom::geometry, b_geom::geometry)) as line_wkt,
+			ST_AsGeoJson(ST_ShortestLine(a_geom::geometry, b_geom::geometry)) as line_geojson
+		from ${DB_PREFIX}dist_comp_a_w_nearest_b
+		order by distance_m
+		) TO STDOUT WITH ( FORMAT CSV, HEADER ON ) ;
+		" >  "${CSV_FILENAME}"
+
+echo "Done"
