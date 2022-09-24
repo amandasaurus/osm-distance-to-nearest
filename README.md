@@ -21,6 +21,9 @@ Creates `guns_banks_distances.csv` (and `guns_banks_distances.geojson`)
 
 ## CSV output
 
+There is one row for every OSM element tagged with the `-a` filter, and it has
+been matched up to the row with `-b` which is the closest.
+
 * `a_tags`: OSM tags for object A. Encoded in JSON, and escaped for CSV
 * `a_osm_type`: Text showing OSM Type for A: either `node`, `way` or `relation`
 * `a_osm_id`: Integer of the OSM ID for A
