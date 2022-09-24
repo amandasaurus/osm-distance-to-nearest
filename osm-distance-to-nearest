@@ -145,7 +145,7 @@ psql -Xq -c "drop table ${DB_PREFIX}dist_comp_a ; drop table ${DB_PREFIX}dist_co
 #		" >  "${DB_PREFIX}distances.geojson"
 #
 
-CSV_FILENAME="${OUTPUT_PREFIX}distances.csv"
+CSV_FILENAME="${OUTPUT_PREFIX:-distances}.csv"
 
 unset SQL_COLS
 for COL in "${WANTED_COLUMNS[@]}" ; do
