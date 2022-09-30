@@ -161,13 +161,21 @@ psql -Xq -c "drop table ${DB_PREFIX}dist_comp_a ; drop table ${DB_PREFIX}dist_co
 #		" >  "${DB_PREFIX}distances.geojson"
 #
 
-CSV_FILENAME="${OUTPUT_PREFIX:-distances}.csv"
+CSV_FILENAME="${OUTPUT_PREFIX}distances.csv"
 
 unset SQL_COLS
 for COL in "${WANTED_COLUMNS[@]}" ; do
 	case $COL in 
 		a_tags | a_osm_type | a_osm_id | b_tags | b_osm_type | b_osm_id | distance_m)
 			SQL_COLS="${SQL_COLS:-}${SQL_COLS:+, }${COL}" ;;
+		a_osm_type_id)
+			SQL_COLS="${SQL_COLS:-}${SQL_COLS:+, }a_osm_type||a_osm_id" ;;
+		b_osm_type_id)
+			SQL_COLS="${SQL_COLS:-}${SQL_COLS:+, }b_osm_type||b_osm_id" ;;
+		a_osm_t_id)
+			SQL_COLS="${SQL_COLS:-}${SQL_COLS:+, }substring(a_osm_type, 1, 1)||a_osm_id" ;;
+		b_osm_t_id)
+			SQL_COLS="${SQL_COLS:-}${SQL_COLS:+, }substring(b_osm_type, 1, 1)||b_osm_id" ;;
 		distance_m_int)
 			SQL_COLS="${SQL_COLS:-}${SQL_COLS:+, }distance_m::bigint" ;;
 		distance_km)
@@ -181,6 +189,14 @@ for COL in "${WANTED_COLUMNS[@]}" ; do
 			SQL_COLS="${SQL_COLS:-}${SQL_COLS:+, }ST_X(ST_Centroid(a_geom)::geometry)" ;;
 		a_point_lng|a_point_lon|a_point_long|a_point_y)
 			SQL_COLS="${SQL_COLS:-}${SQL_COLS:+, }ST_Y(ST_Centroid(a_geom)::geometry)" ;;
+		a_point_geohash)
+			SQL_COLS="${SQL_COLS:-}${SQL_COLS:+, }ST_GeoHash(ST_Centroid(a_geom)::geometry)" ;; 
+		a_point_geohash*)
+			SQL_COLS="${SQL_COLS:-}${SQL_COLS:+, }ST_GeoHash(ST_Centroid(a_geom)::geometry, ${COL#a_point_geohash})" ;; 
+		a_point_latlon|a_point_latlng|a_point_latlong|a_point_yx)
+			SQL_COLS="${SQL_COLS:-}${SQL_COLS:+, }format('%s,%s', ST_Y(ST_Centroid(a_geom)::geometry), ST_X(ST_Centroid(a_geom)::geometry))" ;; 
+		a_point_lonlat|a_point_lnglat|a_point_longlat|a_point_xy)
+			SQL_COLS="${SQL_COLS:-}${SQL_COLS:+, }format('%s,%s', ST_X(ST_Centroid(a_geom)::geometry), ST_Y(ST_Centroid(a_geom)::geometry))" ;; 
 
 		b_point_wkt) SQL_COLS="${SQL_COLS:-}${SQL_COLS:+, }ST_AsText(ST_Centroid(b_geom)::geometry)" ;;
 		b_point_geojson) SQL_COLS="${SQL_COLS:-}${SQL_COLS:+, }ST_AsGeoJson(ST_Centroid(b_geom))" ;;
@@ -188,12 +204,19 @@ for COL in "${WANTED_COLUMNS[@]}" ; do
 			SQL_COLS="${SQL_COLS:-}${SQL_COLS:+, }ST_X(ST_Centroid(b_geom)::geometry)" ;;
 		b_point_lng|b_point_lon|b_point_long|b_point_y)
 			SQL_COLS="${SQL_COLS:-}${SQL_COLS:+, }ST_Y(ST_Centroid(b_geom)::geometry)" ;;
+		b_point_geohash)
+			SQL_COLS="${SQL_COLS:-}${SQL_COLS:+, }ST_GeoHash(ST_Centroid(b_geom)::geometry)" ;; 
+		b_point_geohash*)
+			SQL_COLS="${SQL_COLS:-}${SQL_COLS:+, }ST_GeoHash(ST_Centroid(b_geom)::geometry, ${COL#b_point_geohash})" ;; 
+		b_point_latlon|b_point_latlng|b_point_latlong|b_point_yx)
+			SQL_COLS="${SQL_COLS:-}${SQL_COLS:+, }format('%s,%s', ST_Y(ST_Centroid(b_geom)::geometry), ST_X(ST_Centroid(b_geom)::geometry))" ;; 
+		b_point_lonlat|b_point_lnglat|b_point_longlat|b_point_xy)
+			SQL_COLS="${SQL_COLS:-}${SQL_COLS:+, }format('%s,%s', ST_X(ST_Centroid(b_geom)::geometry), ST_Y(ST_Centroid(b_geom)::geometry))" ;; 
 
 		line_wkt)
 			SQL_COLS="${SQL_COLS:-}${SQL_COLS:+, }ST_AsText(ST_ShortestLine(a_geom::geometry, b_geom::geometry))" ;;
 		line_geojson)
-			SQL_COLS="${SQL_COLS:-}${SQL_COLS:+, }ST_AsGeoJson(ST_ShortestLine(a_geom::geometry, b_geom::geometry))"
-			;;
+			SQL_COLS="${SQL_COLS:-}${SQL_COLS:+, }ST_AsGeoJson(ST_ShortestLine(a_geom::geometry, b_geom::geometry))" ;;
 		*)
 			echo "Unknown column ${COL}"
 			exit 1 ;;
