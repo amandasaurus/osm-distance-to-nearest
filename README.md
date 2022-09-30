@@ -42,6 +42,12 @@ been matched up to the row with `-b` which is the closest.
 * `line_wkt`: Line from A to B, encoded as WKT
 * `line_geojson`: Line from A to B, encoded as GeoJSON geometry
 
+### GeoJSON output
+
+The CSV could be converted to GeoJSON with this command:
+
+	ogr2ogr -F GeoJSON OUTPUT.geojson FILENAME.csv -oo GEOM_POSSIBLE_NAMES=line_wkt -oo KEEP_GEOM_COLUMNS=no
+
 ## See Also
 
 * [`osmium`](https://osmcode.org/osmium-tool/): Tags are filtered with osmium tool.
