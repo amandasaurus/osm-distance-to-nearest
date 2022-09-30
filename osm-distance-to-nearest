@@ -134,7 +134,22 @@ fi
 psql -q -X -c "analyze ${DB_PREFIX}dist_comp_a ; analyze ${DB_PREFIX}dist_comp_b;"
 
 echo "Matching up nearest"
-psql -Xq -c "drop table if exists ${DB_PREFIX}dist_comp_a_w_nearest_b ; CREATE TABLE ${DB_PREFIX}dist_comp_a_w_nearest_b AS ( select a.tags as a_tags, a.geom as a_geom, a.osm_type as a_osm_type, a.osm_id as a_osm_id, b.tags as b_tags, b.geom as b_geom, b.osm_type as b_osm_type, b.osm_id as b_osm_id, distance_m from ${DB_PREFIX}dist_comp_a as a cross join lateral ( select *, ST_Distance(a.geom, b.geom) as distance_m from ${DB_PREFIX}dist_comp_b as b order by a.geom<->b.geom limit 1 ) as b )"
+psql -Xq -c "drop table if exists ${DB_PREFIX}dist_comp_a_w_nearest_b ;
+CREATE TABLE ${DB_PREFIX}dist_comp_a_w_nearest_b AS (
+	select
+		a.tags as a_tags, a.geom as a_geom, a.osm_type as a_osm_type, a.osm_id as a_osm_id,
+		b.tags as b_tags, b.geom as b_geom, b.osm_type as b_osm_type, b.osm_id as b_osm_id,
+		distance_m
+		from
+			${DB_PREFIX}dist_comp_a as a cross join lateral (
+				select *,
+					ST_Distance(a.geom, b.geom) as distance_m
+					from ${DB_PREFIX}dist_comp_b as b
+					where NOT ( a.osm_type = b.osm_type AND a.osm_id = b.osm_id )
+					order by a.geom<->b.geom
+					limit 1
+			) as b
+	)"
 if $B_TO_A ; then
 	psql -Xq -c "insert into ${DB_PREFIX}dist_comp_a_w_nearest_b select a.tags as a_tags, a.geom as a_geom, a.osm_type as a_osm_type, a.osm_id as a_osm_id, b.tags as b_tags, b.geom as b_geom, b.osm_type as b_osm_type, b.osm_id as b_osm_id, distance_m from ${DB_PREFIX}dist_comp_a as a cross join lateral ( select *, ST_Distance(a.geom, b.geom) as distance_m from ${DB_PREFIX}dist_comp_b as b order by a.geom<->b.geom limit 1 ) as b"
 fi
