@@ -40,7 +40,7 @@ while getopts "i:o:a:b:p:rvIc:CkK" OPT ; do
 		k) KEEP_INTERMEDIATE=true ;;
 		K) KEEP_INTERMEDIATE=false ;;
 		C) CENTROID_IFY_GEOM=true ;;
-		c) for COL in ${OPTARG/,/ /} ; do
+		c) for COL in ${OPTARG//,/ } ; do
 				WANTED_COLUMNS+=("$COL")
 			done
 		;;
